@@ -5,12 +5,12 @@
 #include <Keypad_I2C.h>
 
 // I2C Address
-#define I2CKeypad_ADDR 0x20 // Keypad I2C address
-#define I2CLCD_ADDR 0x27    // LCD I2C address
+#define I2C_Keypad_ADDR 0x20  // Keypad I2C address
+#define I2C_Display_ADDR 0x27 // LCD I2C address
 
-#define servoPin 7    // servo pin
-#define buttonPin 4   // the number of the pushbutton pin
-#define ledPin 2      // the number of the LED pin
+#define servoPin 8     // servo pin
+#define buttonPin 7    // the number of the pushbutton pin
+#define ledPin 4       // the number of the LED pin
 #define blinkLedPin 13 // the number of the LED pin for blink
 #define ROW_NUM 4      // four rows
 #define COLUMN_NUM 4   // four columns
@@ -38,9 +38,6 @@ String confirm_passwd = "";
 // Define keys for lock and unlock or change password function
 char lock_key = '*';
 char unlock_key = '#';
-char change_pass_key = 'G'; // press "D" key for more than 3 second
-char key = 0;               // variable to store the key
-int keyState = 0;           // the current state of the output pin
 int numKey = 4;
 int numDelay = 3;
 
@@ -53,11 +50,11 @@ char hexaKeys[ROW_NUM][COLUMN_NUM] = {
 };
 
 // Define pins for every row of keypad
-byte rowPins[ROW_NUM] = {0,1,2,3};
+byte rowPins[ROW_NUM] = {0, 1, 2, 3};
 // Define pins for every column of keypad
-byte columnPins[COLUMN_NUM] = {4,5,6,7};
+byte columnPins[COLUMN_NUM] = {4, 5, 6, 7};
 // Create an instance for our keypad
-Keypad_I2C I2C_Keypad(makeKeymap(hexaKeys), rowPins, columnPins, ROW_NUM, COLUMN_NUM, I2CKeypad_ADDR, PCF8574);
+Keypad_I2C I2C_Keypad(makeKeymap(hexaKeys), rowPins, columnPins, ROW_NUM, COLUMN_NUM, I2C_Keypad_ADDR, PCF8574);
 
 unsigned long currentMillis = 0;
 
@@ -74,13 +71,16 @@ unsigned long lastKeyPressTime = 0;
 const unsigned long debounceDelay = 100;
 unsigned long lastKeyHoldTime = 0;
 const unsigned long holdDelay = 700;
+bool isUnlock = false;
+bool isLock = false;
+bool isChangePasswd = false;
 
 unsigned long wrongPasswordTime = 0;
 const unsigned long wrongPasswordDelay = 3000;
 bool isShowingWrongPassword = false;
 
 // Import LCD
-LiquidCrystal_I2C lcd(I2CLCD_ADDR, 16, 2); // I2C address 0x27, 16 column and 2 rows
+LiquidCrystal_I2C lcd(I2C_Display_ADDR, 16, 2); // I2C address 0x27, 16 column and 2 rows
 unsigned long LCDStartTime = 0;
 const unsigned long LCDStartDelay = 3000;
 bool isLCDStarted = false;
@@ -89,15 +89,62 @@ bool isLCDStarted = false;
 Servo servo;
 Servo servoWater;
 
+void setup()
+{
+  Serial.begin(9600);
+
+  // initialize the keypad:
+  Wire.begin();
+  I2C_Keypad.begin();
+  I2C_Keypad.addEventListener(keypadEvent);
+
+  // initialize the LED pin as an output:
+  pinMode(ledPin, OUTPUT);
+  pinMode(blinkLedPin, OUTPUT);
+
+  // initialize the pushbutton pin as an input:
+  pinMode(buttonPin, INPUT);
+
+  // servo door
+  servo.attach(servoPin);
+  servo.write(pos);
+
+  digitalWrite(ledPin, ledState);
+  currentButtonState = digitalRead(buttonPin);
+
+  lcd.init(); // initialize the lcd
+  lcd.backlight();
+  lcd.clear();
+  lcd.print(" <3 Welcome <3 ");
+
+  // set the water sensor pin as input
+  pinMode(waterSensorPin, INPUT);
+  // set the servo pin as output
+  servoWater.attach(spinServoPin);
+}
+
+void loop()
+{
+  char keyzz = I2C_Keypad.getKey();
+  if (keyzz)
+  {
+    Serial.println(keyzz);
+  }
+  currentMillis = millis();
+  ledBlink();
+  startLCD();
+  doorButton();
+  digitalDoor();
+  doorOpenClose();
+  waterSensor();
+}
+
 void ledBlink()
 {
   if (currentMillis - blinkPreviousMillis >= blinkPeriod)
   {
     blinkPreviousMillis = currentMillis;
-    if (blinkState == LOW)
-      blinkState = HIGH;
-    else
-      blinkState = LOW;
+    blinkState = !blinkState;
     digitalWrite(blinkLedPin, blinkState);
   }
 }
@@ -113,12 +160,12 @@ void startLCD()
     old_passwd = "";
     new_passwd = "";
     confirm_passwd = "";
-    key = 0;
   }
 }
 
 void restartLCDStatus()
 {
+  isLCDStarted = false;
   if (!isLCDStarted)
   {
     LCDStartTime = currentMillis;
@@ -126,35 +173,34 @@ void restartLCDStatus()
   }
 }
 
-char function_key(int n)
+void keypadEvent(KeypadEvent key)
 {
-  char tempKey = I2C_Keypad.getKey();
-
-  if (tempKey != NO_KEY && currentMillis - lastKeyPressTime >= debounceDelay)
+  switch (I2C_Keypad.getState())
   {
-    lastKeyPressTime = currentMillis;
-    if ((int)I2C_Keypad.getState() == PRESSED)
+  case PRESSED:
+    switch (key)
     {
-      key = tempKey;
+    case '#':
+      isLock = false;
+      isUnlock = true;
+      break;
+    case '*':
+      isUnlock = false;
+      isLock = true;
+      break;
     }
-  }
-
-  if (tempKey == NO_KEY && (int)I2C_Keypad.getState() == HOLD)
-  {
-    if (currentMillis - lastKeyHoldTime > holdDelay)
+    break;
+  case HOLD:
+    switch (key)
     {
-      lastKeyHoldTime = currentMillis;
-      keyState++;
-      keyState = constrain(keyState, 1, n);
+    case '*':
+      isChangePasswd = true;
+      isUnlock = false;
+      isLock = false;
+      break;
     }
+    break;
   }
-  else if ((int)I2C_Keypad.getState() == RELEASED)
-  {
-    key += keyState;
-    keyState = 0;
-  }
-
-  return key;
 }
 
 void input_password(int n, String &input)
@@ -162,24 +208,25 @@ void input_password(int n, String &input)
   if (input.length() == 0)
   {
     lcd.setCursor(0, 1);
-    lcd.print("     ");
+    lcd.print("                ");
   }
   if (input.length() < n)
   {
     char temp = I2C_Keypad.getKey();
-    if (temp != NO_KEY)
+    if (temp)
     {
       input += temp;
-    }
-    if (!isLCDStarted)
-    {
-      lcd.setCursor(0, 1);
-      for (int i = 0; i < input.length(); i++)
+      if (!isLCDStarted)
       {
-        lcd.print("*");
+        Serial.println(input);
+
+        lcd.setCursor(0, 1);
+        for (int i = 0; i < input.length(); i++)
+        {
+          lcd.print("*");
+        }
       }
     }
-    Serial.println("Input: " + input);
   }
 }
 
@@ -188,124 +235,129 @@ void change_password(int num_char, String current_password)
   // Authenticate the old password
   if (old_passwd.length() < num_char)
   {
-    Serial.println("Old password: ");
     lcd.setCursor(0, 0);
     lcd.print("Old password    ");
     input_password(num_char, old_passwd);
   }
-  if (old_passwd.length() == num_char)
+  else if (old_passwd != current_password)
   {
-    if (old_passwd != current_password)
+    Serial.println("Password does not match! Nothing changes");
+    lcd.clear();
+    lcd.print("Pass not match!");
+    restartLCDStatus();
+    resetDigitalDoor();
+  }
+  else
+  {
+    if (new_passwd.length() < num_char)
+    {
+      lcd.setCursor(0, 0);
+      lcd.print("New password    ");
+      input_password(num_char, new_passwd);
+    }
+    else if (confirm_passwd.length() < num_char)
+    {
+      lcd.setCursor(0, 0);
+      lcd.print("Confirm password");
+      input_password(num_char, confirm_passwd);
+    }
+    else if (new_passwd != confirm_passwd)
     {
       Serial.println("Password does not match! Nothing changes");
-      lcd.setCursor(0, 1);
+      lcd.clear();
       lcd.print("Pass not match!");
-      key = 0;
       restartLCDStatus();
+      resetDigitalDoor();
     }
     else
     {
-      if (new_passwd.length() < num_char)
-      {
-        Serial.println("New password: ");
-        lcd.setCursor(0, 0);
-        lcd.print("New password    ");
-        input_password(num_char, new_passwd);
-      }
-      else if (confirm_passwd.length() < num_char)
-      {
-        Serial.println("Confirm password: ");
-        lcd.setCursor(0, 0);
-        lcd.print("Confirm password");
-        input_password(num_char, confirm_passwd);
-      }
-      else
-      {
-        if (new_passwd == confirm_passwd)
-        {
-          default_passwd = confirm_passwd;
-          Serial.println("Password has changed!!!");
-          lcd.setCursor(0, 1);
-          lcd.print("Password has    ");
-          lcd.setCursor(0, 1);
-          lcd.print("changed !!!");
-          key = 0;
-          restartLCDStatus();
-        }
-        else
-        {
-          Serial.println("Password does not match! Nothing changes");
-          lcd.setCursor(0, 1);
-          lcd.print("Pass not match!");
-          key = 0;
-          restartLCDStatus();
-        }
-      }
+      default_passwd = confirm_passwd;
+      Serial.println("Password has changed!!!");
+      lcd.clear();
+      lcd.print("Password has    ");
+      lcd.setCursor(0, 1);
+      lcd.print("changed !!!");
+      restartLCDStatus();
+      resetDigitalDoor();
     }
   }
 }
 
 void unlock()
 {
-  lcd.setCursor(0, 0);
-  lcd.print("Input password");
-  input_password(numKey, input_passwd);
-  if (input_passwd.length() == numKey)
+  if (doorState == 0)
   {
-    if (input_passwd == default_passwd)
+    lcd.setCursor(0, 0);
+    lcd.print("Input password");
+    input_password(numKey, input_passwd);
+    if (input_passwd.length() == numKey)
     {
-      restartLCDStatus();
-      doorOpen();
-    }
-    else
-    {
-      Serial.println("Wrong password");
-      lcd.setCursor(0, 1);
-      lcd.print("Wrong password");
-      restartLCDStatus();
+      if (input_passwd == default_passwd)
+      {
+        doorOpen();
+      }
+      else
+      {
+        Serial.println("Wrong password");
+        lcd.clear();
+        lcd.print("Wrong password");
+        resetDigitalDoor();
+        restartLCDStatus();
+      }
     }
   }
 }
 
 void lock()
 {
-  restartLCDStatus();
-  doorClose();
+  if (doorState == 1)
+  {
+    doorClose();
+  }
+}
+
+void resetDigitalDoor()
+{
+  isUnlock = false;
+  isLock = false;
+  isChangePasswd = false;
 }
 
 void digitalDoor()
 {
-  key = function_key(numDelay);
-  if (key == unlock_key)
+  if (!digitalRead(buttonPin))
   {
-    unlock();
-  }
-  if (key == change_pass_key)
-  {
-    change_password(numKey, default_passwd);
-  }
-  if (key == lock_key)
-  {
-    lock();
+    if (isUnlock)
+    {
+      unlock();
+    }
+    if (isLock)
+    {
+      lock();
+    }
+    if (isChangePasswd)
+    {
+      change_password(numKey, default_passwd);
+    }
   }
 }
 
-void doorButton(int button)
+void doorButton()
 {
   if (currentMillis - buttonPreviousMillis >= buttonPeriod)
   {
     buttonPreviousMillis = currentMillis;
 
-    lastButtonState = currentButtonState;     // save the last state
-    currentButtonState = digitalRead(button); // read new state
+    lastButtonState = currentButtonState;        // save the last state
+    currentButtonState = digitalRead(buttonPin); // read new state
     if (lastButtonState == HIGH && currentButtonState == LOW)
     {
-      if (ledState == LOW)
+      if (doorState == 0)
       {
         restartLCDStatus();
         doorOpen();
       }
-      else if (ledState == HIGH)
+      else if (doorState == 1)
       {
         restartLCDStatus();
         doorClose();
@@ -339,26 +391,30 @@ void doorOpenClose()
 
 void doorOpen()
 {
+  resetDigitalDoor();
+  restartLCDStatus();
   Serial.println("Open the door");
 
-  lcd.setCursor(0, 1);
+  lcd.clear();
   lcd.print("Door is opened");
 
+  doorState = 1;
   ledState = HIGH;
   digitalWrite(ledPin, ledState);
-  doorState = 1;
 }
 
 void doorClose()
 {
+  resetDigitalDoor();
+  restartLCDStatus();
   Serial.println("Close the door");
 
-  lcd.setCursor(0, 1);
+  lcd.clear();
   lcd.print("Door is closed");
 
+  doorState = 0;
   ledState = LOW;
   digitalWrite(ledPin, ledState);
-  doorState = 0;
 }
 
 int statusWaterSensor = 0; // 0: no water, 1: water detected
@@ -384,44 +440,4 @@ void waterSensor()
     spinServoClothesline();
     Serial.println("Clothesline done");
   }
-}
-
-void setup()
-{
-  Wire.begin();
-  I2C_Keypad.begin(makeKeymap(hexaKeys));
-  Serial.begin(9600);
-  // initialize the LED pin as an output:
-  pinMode(ledPin, OUTPUT);
-  pinMode(blinkLedPin, OUTPUT);
-  // initialize the pushbutton pin as an input:
-  pinMode(buttonPin, INPUT);
-
-  // servo
-  servo.attach(servoPin);
-  servo.write(pos);
-
-  digitalWrite(ledPin, ledState);
-  currentButtonState = digitalRead(buttonPin);
-
-  lcd.init(); // initialize the lcd
-  lcd.backlight();
-  lcd.clear();
-  lcd.print(" <3 Welcome <3 ");
-
-  // set the water sensor pin as input
-  pinMode(waterSensorPin, INPUT);
-  // set the servo pin as output
-  servoWater.attach(spinServoPin);
-}
-
-void loop()
-{
-  currentMillis = millis();
-  ledBlink();
-  startLCD();
-  doorButton(buttonPin);
-  digitalDoor();
-  doorOpenClose();
-  waterSensor();
 }

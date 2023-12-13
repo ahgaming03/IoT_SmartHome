@@ -1,32 +1,41 @@
-// #include <Arduino.h>
 #include <Servo.h>
 #include <LiquidCrystal_I2C.h>
-#include <Keypad.h>
 #include <Keypad_I2C.h>
 
 // I2C Address
 #define I2C_Keypad_ADDR 0x20  // Keypad I2C address
 #define I2C_Display_ADDR 0x27 // LCD I2C address
 
-#define servoPin 8     // servo pin
-#define buttonPin 7    // the number of the pushbutton pin
-#define ledPin 4       // the number of the LED pin
+// Define blink led pin
 #define blinkLedPin 13 // the number of the LED pin for blink
-#define ROW_NUM 4      // four rows
-#define COLUMN_NUM 4   // four columns
 
-#define waterSensorPin A2 // The pin that the water sensor is connected to
-#define spinServoPin A3   // The pin that the servo is connected to
+// Define pins for feature "Digital Door"
+#define servoPin 10   // servo pin
+#define btnDoor 11    // the number of the pushbutton pin
+#define doorLedPin 12 // the number of the LED pin
+#define ROW_NUM 4     // four rows
+#define COLUMN_NUM 3  // four columns
+
+// Define pins for feature "Fire Alarm"
+#define flamePin 2   // The pin that the flame sensor is connected to
+#define btnStop 3    // the number of the pushbutton pin
+#define buzzerPin 4  // the number of the buzzer pin
+#define fireLedPin 5 // the number of the LED pin
+
+// Define pins for feature "Smart clothesline"
+#define RAIN_SENSOR_PIN A0 // The pin that the water sensor is connected to
+#define RAIN_SERVO_PIN 8   // The pin that the servo is connected to
 
 // Define some constants and variables
+int blinkState = LOW; // ledState used to set the LED for blink
+
 int lastButtonState;    // variable for reading the pushbutton status
 int currentButtonState; // variable for reading the pushbutton status
 int ledState = LOW;     // ledState used to set the LED
-int blinkState = LOW;   // ledState used to set the LED for blink
-int pos = 0;            // variable to store the servo position
+int positionDoor = 0;   // variable to store the servo position
 int servoIncrement = 1; // increment for each step
+int doorState = 0;      // 0: close, 1: open
 
-int doorState = 0; // 0: close, 1: open
 // Default password is 0000
 String default_passwd = "0000";
 // variable to store the user input for password
@@ -40,33 +49,32 @@ char lock_key = '*';
 char unlock_key = '#';
 int numKey = 4;
 int numDelay = 3;
-
 // Define characters matrix
 char hexaKeys[ROW_NUM][COLUMN_NUM] = {
-    {'1', '2', '3', 'A'},
-    {'4', '5', '6', 'B'},
-    {'7', '8', '9', 'C'},
-    {'*', '0', '#', 'D'},
+    {'1', '2', '3'},
+    {'4', '5', '6'},
+    {'7', '8', '9'},
+    {'*', '0', '#'},
 };
-
 // Define pins for every row of keypad
 byte rowPins[ROW_NUM] = {0, 1, 2, 3};
 // Define pins for every column of keypad
-byte columnPins[COLUMN_NUM] = {4, 5, 6, 7};
+byte columnPins[COLUMN_NUM] = {4, 5, 6};
 // Create an instance for our keypad
 Keypad_I2C I2C_Keypad(makeKeymap(hexaKeys), rowPins, columnPins, ROW_NUM, COLUMN_NUM, I2C_Keypad_ADDR, PCF8574);
+
+int flameState = LOW; // flameState used to set the LED
 
 unsigned long currentMillis = 0;
 
 unsigned long blinkPreviousMillis = 0;
 const unsigned long blinkPeriod = 500;
 
+// Define variables for feature "Digital Door"
 unsigned long buttonPreviousMillis = 0;
 const unsigned long buttonPeriod = 100;
-
 unsigned long servoPreviousMillis = 0;
 const unsigned long servoPeriod = 10;
-
 unsigned long lastKeyPressTime = 0;
 const unsigned long debounceDelay = 100;
 unsigned long lastKeyHoldTime = 0;
@@ -75,10 +83,6 @@ bool isUnlock = false;
 bool isLock = false;
 bool isChangePasswd = false;
 
-unsigned long wrongPasswordTime = 0;
-const unsigned long wrongPasswordDelay = 3000;
-bool isShowingWrongPassword = false;
-
 // Import LCD
 LiquidCrystal_I2C lcd(I2C_Display_ADDR, 16, 2); // I2C address 0x27, 16 column and 2 rows
 unsigned long LCDStartTime = 0;
@@ -86,59 +90,10 @@ const unsigned long LCDStartDelay = 3000;
 bool isLCDStarted = false;
 
 // Create an instance for servo motor
-Servo servo;
-Servo servoWater;
+Servo servoDoor;
+Servo servoRain;
 
-void setup()
-{
-  Serial.begin(9600);
-
-  // initialize the keypad:
-  Wire.begin();
-  I2C_Keypad.begin();
-  I2C_Keypad.addEventListener(keypadEvent);
-
-  // initialize the LED pin as an output:
-  pinMode(ledPin, OUTPUT);
-  pinMode(blinkLedPin, OUTPUT);
-
-  // initialize the pushbutton pin as an input:
-  pinMode(buttonPin, INPUT);
-
-  // servo door
-  servo.attach(servoPin);
-  servo.write(pos);
-
-  digitalWrite(ledPin, ledState);
-  currentButtonState = digitalRead(buttonPin);
-
-  lcd.init(); // initialize the lcd
-  lcd.backlight();
-  lcd.clear();
-  lcd.print(" <3 Welcome <3 ");
-
-  // set the water sensor pin as input
-  pinMode(waterSensorPin, INPUT);
-  // set the servo pin as output
-  servoWater.attach(spinServoPin);
-}
-
-void loop()
-{
-  char keyzz = I2C_Keypad.getKey();
-  if (keyzz)
-  {
-    Serial.println(keyzz);
-  }
-  currentMillis = millis();
-  ledBlink();
-  startLCD();
-  doorButton();
-  digitalDoor();
-  doorOpenClose();
-  waterSensor();
-}
-
+/* project life */
 void ledBlink()
 {
   if (currentMillis - blinkPreviousMillis >= blinkPeriod)
@@ -149,6 +104,7 @@ void ledBlink()
   }
 }
 
+/* Smart door */
 void startLCD()
 {
   if (isLCDStarted && currentMillis - LCDStartTime >= LCDStartDelay)
@@ -156,21 +112,18 @@ void startLCD()
     lcd.clear();
     lcd.print(" <3 WELCOME <3 ");
     isLCDStarted = false;
-    input_passwd = "";
-    old_passwd = "";
-    new_passwd = "";
-    confirm_passwd = "";
   }
 }
 
 void restartLCDStatus()
 {
-  isLCDStarted = false;
-  if (!isLCDStarted)
-  {
-    LCDStartTime = currentMillis;
-    isLCDStarted = true;
-  }
+  input_passwd = "";
+  old_passwd = "";
+  new_passwd = "";
+  confirm_passwd = "";
+
+  LCDStartTime = currentMillis;
+  isLCDStarted = true;
 }
 
 void keypadEvent(KeypadEvent key)
@@ -325,7 +278,8 @@ void resetDigitalDoor()
 
 void digitalDoor()
 {
-  if (!digitalRead(buttonPin))
+  I2C_Keypad.getKey();
+  if (!digitalRead(btnDoor))
   {
     if (isUnlock)
     {
@@ -348,8 +302,8 @@ void doorButton()
   {
     buttonPreviousMillis = currentMillis;
 
-    lastButtonState = currentButtonState;        // save the last state
-    currentButtonState = digitalRead(buttonPin); // read new state
+    lastButtonState = currentButtonState;      // save the last state
+    currentButtonState = digitalRead(btnDoor); // read new state
     if (lastButtonState == HIGH && currentButtonState == LOW)
     {
       if (doorState == 0)
@@ -373,19 +327,19 @@ void doorOpenClose()
     servoPreviousMillis = currentMillis;
     if (doorState == 0)
     {
-      if (pos > 0)
+      if (positionDoor > 0)
       {
-        pos -= servoIncrement;
+        positionDoor -= servoIncrement;
       }
     }
     else if (doorState == 1)
     {
-      if (pos < 90)
+      if (positionDoor < 90)
       {
-        pos += servoIncrement;
+        positionDoor += servoIncrement;
       }
     }
-    servo.write(pos);
+    servoDoor.write(positionDoor);
   }
 }
 
@@ -400,7 +354,7 @@ void doorOpen()
 
   doorState = 1;
   ledState = HIGH;
-  digitalWrite(ledPin, ledState);
+  digitalWrite(doorLedPin, ledState);
 }
 
 void doorClose()
@@ -414,30 +368,150 @@ void doorClose()
 
   doorState = 0;
   ledState = LOW;
-  digitalWrite(ledPin, ledState);
+  digitalWrite(doorLedPin, ledState);
 }
 
-int statusWaterSensor = 0; // 0: no water, 1: water detected
+/* Fire alarm */
+// Define variables for feature "Fire Alarm"
+bool isFire = false;
+unsigned long lastFireTime = 0;
+const unsigned long fireDelay = 1000;
 
-void spinServoClothesline()
+void fireAlarm()
 {
-  for (int i = 0; i <= 180; i += 1)
-  {                 // goes from 0 degrees to 180 degrees
-    servo.write(i); // Set the servo position
-    // delay(15);  // Wait 15 milliseconds for the servo to reach the position
+  if (digitalRead(flamePin) == LOW)
+  {
+    isFire = true;
+  }
+  else if (digitalRead(btnStop) == HIGH)
+  {
+    isFire = false;
+  }
+  if (isFire)
+  {
+    if (currentMillis - lastFireTime >= fireDelay)
+    {
+      lastFireTime = currentMillis;
+      flameState = !flameState;
+      if (flameState == HIGH)
+      {
+        digitalWrite(fireLedPin, flameState);
+        tone(buzzerPin, 400);
+      }
+      else if (flameState == LOW)
+      {
+        digitalWrite(fireLedPin, flameState);
+        tone(buzzerPin, 200);
+      }
+    }
+    Serial.println("Fire detected");
+  }
+  else
+  {
+    digitalWrite(fireLedPin, LOW);
+    noTone(buzzerPin);
   }
 }
 
-void waterSensor()
+/* Smart clothesline*/
+int rainValue = 0;
+bool isRain = false;
+
+unsigned long RainTime = 0;
+
+unsigned long previousRainTime = 0;
+const unsigned long rainDelay = 1000;
+
+unsigned long previousServoTime = 0;
+const unsigned long servoRainDelay = 10000;
+
+void smartClothesline()
 {
-  if (statusWaterSensor == 1)
+  rainValue = analogRead(RAIN_SENSOR_PIN);
+  if (currentMillis - RainTime >= 1000)
   {
+    RainTime = currentMillis;
+    Serial.print("Rain value: ");
+    Serial.println(rainValue);
   }
-  if (statusWaterSensor == 0 && digitalRead(waterSensorPin) == HIGH)
+  if (rainValue > 400)
   {
-    statusWaterSensor = 1;
-    Serial.println("Water detected");
-    spinServoClothesline();
-    Serial.println("Clothesline done");
+    previousRainTime = currentMillis;
   }
+
+  if (!isRain && currentMillis - previousRainTime >= rainDelay)
+  {
+
+    Serial.print("Raining: ");
+    Serial.println(rainValue);
+    isRain = true;
+    previousServoTime = currentMillis;
+  }
+
+  if (isRain && currentMillis - previousServoTime < servoRainDelay)
+  {
+    servoRain.write(85);
+  }
+  else
+  {
+    servoRain.write(90);
+    isRain = false;
+  }
+}
+
+
+
+void setup()
+{
+  Serial.begin(9600);
+
+  /* Project life */
+  // initialize the LED pin as an output:
+  pinMode(blinkLedPin, OUTPUT);
+
+  /* Smart door */
+  // initialize the keypad:
+  Wire.begin();
+  I2C_Keypad.begin();
+  I2C_Keypad.addEventListener(keypadEvent);
+  // initialize the pushbutton pin as an input:
+  pinMode(btnDoor, INPUT);
+  // servo door
+  servoDoor.attach(servoPin);
+  servoDoor.write(positionDoor);
+  // led door
+  pinMode(doorLedPin, OUTPUT);
+  digitalWrite(doorLedPin, ledState);
+  currentButtonState = digitalRead(btnDoor);
+  // initialize the lcd
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  lcd.print(" <3 Welcome <3 ");
+
+  /* fire alarm */
+  pinMode(flamePin, INPUT);
+  pinMode(btnStop, INPUT);
+  pinMode(buzzerPin, OUTPUT);
+  pinMode(fireLedPin, OUTPUT);
+  digitalWrite(fireLedPin, LOW);
+
+  /* Smart clothesline */
+  // set the water sensor pin as input
+  pinMode(RAIN_SENSOR_PIN, INPUT);
+  // set the servo rain pin as output
+  servoRain.attach(RAIN_SERVO_PIN);
+  servoRain.write(90);
+}
+
+void loop()
+{
+  currentMillis = millis();
+  ledBlink();
+  fireAlarm();
+  smartClothesline();
+  startLCD();
+  doorButton();
+  digitalDoor();
+  doorOpenClose();
 }

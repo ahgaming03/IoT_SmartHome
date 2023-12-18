@@ -10,17 +10,17 @@
 #define BLINK_LED_PIN 13 // the number of the LED pin for blink
 
 // Define pins for feature "Digital Door"
-#define SERVO_DOOR_PIN 10   // servo pin
+#define SERVO_DOOR_PIN 10 // servo pin
 #define BUTTON_DOOR 11    // the number of the pushbutton pin
-#define DOOR_LED_PIN 12 // the number of the LED pin
-#define ROW_NUM 4     // four rows
-#define COLUMN_NUM 3  // four columns
+#define DOOR_LED_PIN 12   // the number of the LED pin
+#define ROW_NUM 4         // four rows
+#define COLUMN_NUM 3      // four columns
 
 // Define pins for feature "Fire Alarm"
-#define FLAME_SENSOR_PIN 2   // The pin that the flame sensor is connected to
-#define BUTTON_STOP 3    // the number of the pushbutton pin
-#define BUZZER_PIN 4  // the number of the buzzer pin
-#define FIRE_LED_PIN 5 // the number of the LED pin
+#define FLAME_SENSOR_PIN A1 // The pin that the flame sensor is connected to
+#define BUTTON_STOP 3       // the number of the pushbutton pin
+#define BUZZER_PIN 4        // the number of the buzzer pin
+#define FIRE_LED_PIN 5      // the number of the LED pin
 
 // Define pins for feature "Smart clothesline"
 #define RAIN_SENSOR_PIN A0 // The pin that the water sensor is connected to
@@ -63,7 +63,6 @@ byte rowPins[ROW_NUM] = {0, 1, 2, 3};
 byte columnPins[COLUMN_NUM] = {4, 5, 6};
 // Create an instance for our keypad
 Keypad_I2C I2C_Keypad(makeKeymap(hexaKeys), rowPins, columnPins, ROW_NUM, COLUMN_NUM, I2C_KEYPAD_ADDR, PCF8574);
-
 
 unsigned long currentMillis = 0;
 
@@ -162,7 +161,7 @@ void input_password(int n, String &input)
   if (input.length() == 0)
   {
     lcd.setCursor(0, 1);
-    lcd.print("                ");
+    lcd.print("           ");
   }
   if (input.length() < n)
   {
@@ -280,7 +279,7 @@ void resetDigitalDoor()
 void digitalDoor()
 {
   I2C_Keypad.getKey();
-  if (!digitalRead(BUTTON_DOOR))
+  if (!currentButtonState)
   {
     if (isUnlock)
     {
@@ -303,18 +302,16 @@ void doorButton()
   {
     buttonPreviousMillis = currentMillis;
 
-    lastButtonState = currentButtonState;      // save the last state
+    lastButtonState = currentButtonState;          // save the last state
     currentButtonState = digitalRead(BUTTON_DOOR); // read new state
     if (lastButtonState == HIGH && currentButtonState == LOW)
     {
       if (doorState == 0)
       {
-        restartLCDStatus();
         doorOpen();
       }
       else if (doorState == 1)
       {
-        restartLCDStatus();
         doorClose();
       }
     }
@@ -375,14 +372,16 @@ void doorClose()
 /* Fire alarm */
 // Define variables for feature "Fire Alarm"
 bool isFire = false;
-int flameState = LOW; // flameState used to set the LED
+int flameLedState = LOW; // flameLedState used to set the LED
 
 unsigned long lastFireTime = 0;
 const unsigned long fireDelay = 1000;
 
 void fireAlarm()
 {
-  if (digitalRead(FLAME_SENSOR_PIN) == LOW)
+  int fValue = analogRead(FLAME_SENSOR_PIN);
+
+  if (fValue <= 400)
   {
     isFire = true;
   }
@@ -390,20 +389,21 @@ void fireAlarm()
   {
     isFire = false;
   }
+
   if (isFire)
   {
     if (currentMillis - lastFireTime >= fireDelay)
     {
       lastFireTime = currentMillis;
-      flameState = !flameState;
-      if (flameState == HIGH)
+      flameLedState = !flameLedState;
+      if (flameLedState == HIGH)
       {
-        digitalWrite(FIRE_LED_PIN, flameState);
+        digitalWrite(FIRE_LED_PIN, flameLedState);
         tone(BUZZER_PIN, 400);
       }
-      else if (flameState == LOW)
+      else if (flameLedState == LOW)
       {
-        digitalWrite(FIRE_LED_PIN, flameState);
+        digitalWrite(FIRE_LED_PIN, flameLedState);
         tone(BUZZER_PIN, 200);
       }
     }
@@ -423,7 +423,7 @@ bool isRain = false;
 unsigned long RainTime = 0;
 
 unsigned long previousRainTime = 0;
-const unsigned long rainDelay = 1000;
+const unsigned long rainDelay = 2000;
 
 unsigned long previousServoTime = 0;
 const unsigned long servoRainDelay = 10000;
@@ -453,16 +453,13 @@ void smartClothesline()
 
   if (isRain && currentMillis - previousServoTime < servoRainDelay)
   {
-    servoRain.write(85);
+    servoRain.write(120);
   }
   else
   {
     servoRain.write(90);
-    isRain = false;
   }
 }
-
-
 
 void setup()
 {

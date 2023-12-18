@@ -440,13 +440,11 @@ void smartClothesline()
   if (rainValue > 400)
   {
     previousRainTime = currentMillis;
+    isRain = false;
   }
 
   if (!isRain && currentMillis - previousRainTime >= rainDelay)
   {
-
-    Serial.print("Raining: ");
-    Serial.println(rainValue);
     isRain = true;
     previousServoTime = currentMillis;
   }
